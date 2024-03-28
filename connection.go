@@ -136,7 +136,7 @@ func (c Connector) prepareSessionRequest(login models.LoginResponse, hashedPassw
 }
 
 func (c Connector) prepareLoginRequest() (*http.Request, error) {
-	url := fmt.Sprintf("%s://%s:%s@%s%s?username=%s&random=%d", c.getProtocol(), c.User, c.Password, c.Host, loginPath, c.User, c.generateRandom())
+	url := fmt.Sprintf("%s://%s:%s@%s%s?username=%s&random=%d", c.getProtocol(), c.User, c.Password, c.Host, loginPath, c.User, generateRandom())
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return nil, err
@@ -144,7 +144,7 @@ func (c Connector) prepareLoginRequest() (*http.Request, error) {
 	return req, nil
 }
 
-func (c Connector) generateRandom() int {
+func generateRandom() int {
 	return rand.Intn(randomLenght)
 }
 
