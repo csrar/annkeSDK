@@ -2,7 +2,10 @@ package annkesdk
 
 import (
 	"errors"
+	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/csrar/annkeSDK/models"
@@ -164,14 +167,123 @@ func TestConnector_NewConnectorErrors(t *testing.T) {
 			inHost:        "\\",
 			expectedError: "Error preparing login request parse \"http://mock-user:mock-password@\\\\/ISAPI/Security/sessionLogin/capabilities?username=mock-user&random=",
 		},
+		{
+			name:          "non existing host url",
+			inUser:        "mock-user",
+			inHost:        "localhost:9999",
+			expectedError: "Error executing login request Get",
+		},
 	}
-
 	for _, tc := range cases {
-		t.Run(t.Name(), func(t *testing.T) {
+		t.Run(tc.name, func(t *testing.T) {
 			cfg, err := NewConnector(tc.inHost, tc.inUser, "mock-password", false)
 			assert.Nil(t, cfg)
 			assert.ErrorContains(t, err, tc.expectedError)
 		})
+	}
+}
 
+func testLoginHanlerHelper(loginResponse, sessionResponse string, loginStatus, sessionStatus int) http.HandlerFunc {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case loginPath:
+			{
+				w.WriteHeader(loginStatus)
+				fmt.Fprintln(w, loginResponse)
+			}
+		case sessionPath:
+			{
+				w.WriteHeader(sessionStatus)
+				fmt.Fprintln(w, sessionResponse)
+			}
+		default:
+			fmt.Fprintln(w, "mock-server")
+		}
+	})
+}
+
+func TestConnector_NewConnector(t *testing.T) {
+	cases := []struct {
+		name            string
+		expectedError   string
+		loginResponse   string
+		sessionResponse string
+		loginStatus     int
+		sessionStatus   int
+	}{
+		{
+			name:          "invalid login response",
+			loginResponse: "mock-error",
+			loginStatus:   http.StatusInternalServerError,
+			expectedError: "received unexpected response from: /ISAPI/Security/sessionLogin/capabilities status: 500 payload: mock-error",
+		},
+		{
+			name:          "invalid login response",
+			loginResponse: "mock-response",
+			loginStatus:   http.StatusOK,
+			expectedError: "Error unmarshaling login response",
+		},
+		{
+			name:            "invalid session status",
+			loginResponse:   "<?xml version=\"1.0\" encoding=\"UTF-8\" ?><SessionLoginCap version=\"1.0\" xmlns=\"http://www.std-cgi.com/ver20/XMLSchema\"><sessionID>123</sessionID><challenge>123</challenge><iterations>100</iterations><isIrreversible>true</isIrreversible><salt>123</salt><isSessionIDValidLongTerm opt=\"true,false\">false</isSessionIDValidLongTerm><sessionIDVersion>2</sessionIDVersion></SessionLoginCap>",
+			loginStatus:     http.StatusOK,
+			sessionStatus:   http.StatusInternalServerError,
+			sessionResponse: "mock-response",
+			expectedError:   "received unexpected response from: /ISAPI/Security/sessionLogin status: 500 payload: mock-response",
+		},
+		{
+			name:            "valid session response",
+			loginResponse:   "<?xml version=\"1.0\" encoding=\"UTF-8\" ?><SessionLoginCap version=\"1.0\" xmlns=\"http://www.std-cgi.com/ver20/XMLSchema\"><sessionID>123</sessionID><challenge>123</challenge><iterations>100</iterations><isIrreversible>true</isIrreversible><salt>123</salt><isSessionIDValidLongTerm opt=\"true,false\">false</isSessionIDValidLongTerm><sessionIDVersion>2</sessionIDVersion></SessionLoginCap>",
+			loginStatus:     http.StatusOK,
+			sessionStatus:   http.StatusOK,
+			sessionResponse: "mock-response",
+			expectedError:   "",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ts := httptest.NewServer(testLoginHanlerHelper(tc.loginResponse, tc.sessionResponse, tc.loginStatus, tc.sessionStatus))
+			defer ts.Close()
+			cfg, err := NewConnector(ts.URL[7:], "mock-user", "mock-password", false)
+			if tc.expectedError != "" {
+				assert.ErrorContains(t, err, tc.expectedError)
+			} else {
+				assert.Nil(t, err)
+				assert.NotNil(t, cfg)
+			}
+		})
+	}
+}
+
+func TestConnector_newSesion(t *testing.T) {
+	cases := []struct {
+		name               string
+		conn               Connector
+		expectedError      string
+		inputLoginResponse models.LoginResponse
+	}{
+		{
+			name:               "invalid connector URL",
+			conn:               Connector{User: "mock-User", Host: "mock host"},
+			inputLoginResponse: mockLoginResponse(),
+			expectedError:      "invalid character \" \" in host name",
+		},
+		{
+			name:               "non existing host url",
+			conn:               Connector{User: "mock-User", Host: "localhost:9999"},
+			inputLoginResponse: mockLoginResponse(),
+			expectedError:      "dial tcp 127.0.0.1:9999: connect: connection refused",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.conn.newSession(models.LoginResponse{})
+			if tc.expectedError != "" {
+				assert.ErrorContains(t, err, tc.expectedError)
+			} else {
+				assert.Nil(t, err)
+			}
+		})
 	}
 }
